@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# GAMP-ID: FS-162-HDS-010-SDS-020-SMS-010
+# GAMP-SCOPE: software-module-test
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${repo_root}"
+
+system="$(nix eval --impure --raw --expr builtins.currentSystem)"
+nix build ".#checks.${system}.yang-validation-contract" --no-link >/dev/null
+
+echo "PASS FS-162-HDS-010-SDS-020-SMS-010: pinned YANG validator and seeded negatives"
