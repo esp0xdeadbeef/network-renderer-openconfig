@@ -12,7 +12,7 @@
     network-control-plane-model.url = "github:esp0xdeadbeef/network-control-plane-model";
     network-control-plane-model.inputs.nixpkgs.follows = "nixpkgs";
 
-    network-realization-model.url = "github:esp0xdeadbeef/network-realization-model/12bc6490b18099b5642e1551403ad0ee02a9f5c9";
+    network-realization-model.url = "github:esp0xdeadbeef/network-realization-model";
     network-realization-model.inputs.nixpkgs.follows = "nixpkgs";
     network-realization-schema.url = "github:esp0xdeadbeef/network-realization-schema/8b80339aa1344e1ad178045635bac45fbf36191d";
     network-realization-schema.inputs.nixpkgs.follows = "nixpkgs";
@@ -119,7 +119,7 @@
               identity = fs230TraceId;
             };
             rootLockIdentity = "network-renderer-openconfig-flake-lock";
-            producerRevision = "network-realization-model-12bc6490";
+            producerRevision = network-realization-model.rev;
           };
           fs230WrongCanonicalBundle = network-realization-model.lib.realize {
             input = fs230WrongRealizationInput;
@@ -128,7 +128,7 @@
               identity = fs230TraceId;
             };
             rootLockIdentity = "network-renderer-openconfig-flake-lock";
-            producerRevision = "network-realization-model-12bc6490";
+            producerRevision = network-realization-model.rev;
           };
           realizationArgs = {
             requestScope = {
