@@ -34,6 +34,22 @@
       openconfigRevision =
         flakeLock.nodes.openconfig.locked.rev
           or (throw "flake.lock lacks nodes.openconfig.locked.rev");
+      cpmNodeName = flakeLock.nodes.root.inputs.network-control-plane-model;
+      cpmNode = flakeLock.nodes.${cpmNodeName};
+      cpmRevision =
+        cpmNode.locked.rev
+          or (throw "flake.lock lacks the CPM revision");
+      forwardingNodeName = cpmNode.inputs.network-forwarding-model;
+      compilerNodeName =
+        flakeLock.nodes.${forwardingNodeName}.inputs.network-compiler;
+      compilerRevision =
+        flakeLock.nodes.${compilerNodeName}.locked.rev
+          or (throw "flake.lock lacks the compiler revision");
+      networkLabsNodeName = flakeLock.nodes.root.inputs.network-labs;
+      networkLabsRevision =
+        flakeLock.nodes.${networkLabsNodeName}.locked.rev
+          or (throw "flake.lock lacks the network-labs revision");
+      fs230TraceId = "FS-230-HDS-010-SDS-010-SMS-040";
     in
     {
       packages = forAllSystems (
@@ -50,6 +66,17 @@
           currentCpmJson =
             pkgs.writeText "current-control-plane-model.json"
               (builtins.toJSON currentCpm);
+          fs230Intent =
+            "${network-labs}/GAMP/SMT/${fs230TraceId}/intent.nix";
+          mkFs230Cpm = inventoryName:
+            network-control-plane-model.libBySystem.${system}.compileAndBuildFromPaths {
+              inputPath = fs230Intent;
+              inventoryPath =
+                "${network-labs}/GAMP/SMT/${fs230TraceId}/${inventoryName}";
+            };
+          fs230CpmNixos = mkFs230Cpm "inventory-nixos.nix";
+          fs230CpmClab = mkFs230Cpm "inventory-clab.nix";
+          fs230CpmOpenConfig = mkFs230Cpm "inventory-openconfig.nix";
         in
         {
           render-openconfig = pkgs.writeShellApplication {
@@ -75,7 +102,21 @@
             '';
           };
 
+          fs230-posture = pkgs.writeShellApplication {
+            name = "fs230-posture";
+            runtimeInputs = [ pkgs.python3 ];
+            text = ''
+              exec python3 ${./fs230-posture.py} "$@"
+            '';
+          };
+
           current-cpm-json = currentCpmJson;
+          fs230-cpm-nixos-json =
+            pkgs.writeText "fs230-cpm-nixos.json" (builtins.toJSON fs230CpmNixos);
+          fs230-cpm-clab-json =
+            pkgs.writeText "fs230-cpm-clab.json" (builtins.toJSON fs230CpmClab);
+          fs230-cpm-openconfig-json =
+            pkgs.writeText "fs230-cpm-openconfig.json" (builtins.toJSON fs230CpmOpenConfig);
 
           default = self.packages.${system}.render-openconfig;
         }
@@ -97,6 +138,11 @@
           type = "app";
           program =
             "${self.packages.${system}.validate-oc-instance}/bin/validate-oc-instance";
+        };
+
+        fs230-posture = {
+          type = "app";
+          program = "${self.packages.${system}.fs230-posture}/bin/fs230-posture";
         };
 
         default = self.apps.${system}.render-openconfig;
@@ -270,6 +316,141 @@
                 and ([.interfaces[].unsupported[].code]
                   | index("OC_CPM_PARSE_UNSUPPORTED_FIELD") != null)
               ' diagnostic.json >/dev/null
+
+              touch "$out"
+            '';
+
+          fs230-posture-contract = pkgs.runCommand
+            "openconfig-fs230-posture-contract"
+            {
+              nativeBuildInputs = [
+                self.packages.${system}.fs230-posture
+                self.packages.${system}.render-openconfig
+                pkgs.coreutils
+                pkgs.diffutils
+                pkgs.jq
+              ];
+            }
+            ''
+              intent=${network-labs}/GAMP/SMT/${fs230TraceId}/intent.nix
+              nixos_cpm=${self.packages.${system}.fs230-cpm-nixos-json}
+              clab_cpm=${self.packages.${system}.fs230-cpm-clab-json}
+              openconfig_cpm=${self.packages.${system}.fs230-cpm-openconfig-json}
+
+              check_posture() {
+                realization="$1"
+                cpm="$2"
+                fs230-posture "$cpm" \
+                  --realization "$realization" \
+                  --canonical-intent "$intent" \
+                  --compiler-revision ${compilerRevision} \
+                  --cpm-revision ${cpmRevision} \
+                  --network-labs-revision ${networkLabsRevision} \
+                  >"$realization-record.json"
+                jq -e '
+                  .code == "OC_FS230_POSTURE_PASS"
+                  and .status == "OK"
+                  and .cpmPortable == true
+                  and .openConfigModelComplete == false
+                  and .networkAccess == false
+                  and .posture.addressFamily == "ipv6"
+                  and .posture.protocol == "udp"
+                  and .posture.port == 4242
+                  and .posture.translationMode == "none"
+                  and .posture.sourcePreservation == "preserve-source"
+                  and .posture.returnBehavior == "stateful-return"
+                  and .posture.inheritedPublicEgress == false
+                  and (.limitations | length == 1)
+                ' "$realization-record.json" >/dev/null
+              }
+
+              check_posture nixos "$nixos_cpm"
+              check_posture clab "$clab_cpm"
+              check_posture openconfig "$openconfig_cpm"
+
+              jq -S .posture nixos-record.json >nixos-posture.json
+              jq -S .posture clab-record.json >clab-posture.json
+              jq -S .posture openconfig-record.json >openconfig-posture.json
+              diff -u nixos-posture.json clab-posture.json
+              diff -u nixos-posture.json openconfig-posture.json
+
+              jq -S .sourceIdentity nixos-record.json >nixos-source.json
+              jq -S .sourceIdentity clab-record.json >clab-source.json
+              jq -S .sourceIdentity openconfig-record.json >openconfig-source.json
+              diff -u nixos-source.json clab-source.json
+              diff -u nixos-source.json openconfig-source.json
+
+              openconfig_hash="$(sha256sum "$openconfig_cpm" | cut -d ' ' -f 1)"
+              fs230-posture "$openconfig_cpm" \
+                --realization openconfig \
+                --canonical-intent "$intent" \
+                --compiler-revision ${compilerRevision} \
+                --cpm-revision ${cpmRevision} \
+                --network-labs-revision ${networkLabsRevision} \
+                --expected-cpm-sha256 "$openconfig_hash" \
+                >/dev/null
+
+              if fs230-posture "$openconfig_cpm" \
+                --realization openconfig \
+                --canonical-intent "$intent" \
+                --compiler-revision ${compilerRevision} \
+                --cpm-revision ${cpmRevision} \
+                --network-labs-revision ${networkLabsRevision} \
+                --expected-cpm-sha256 0000000000000000000000000000000000000000000000000000000000000000 \
+                2>identity-mismatch.json
+              then
+                echo "FAIL: mismatched CPM identity was accepted" >&2
+                exit 1
+              fi
+              jq -e '.code == "OC_FS230_CPM_IDENTITY_MISMATCH"' \
+                identity-mismatch.json >/dev/null
+
+              jq '
+                (.control_plane_model.data."mini-smt"."${fs230TraceId}"
+                  .runtimeTargets[]
+                  | select(.natIntent.publicIngress | length > 0)
+                  .natIntent.publicIngress[0].tupleRecords[0].protocol) = "tcp"
+              ' "$openconfig_cpm" >wrong-protocol.json
+              if fs230-posture wrong-protocol.json \
+                --realization openconfig \
+                --canonical-intent "$intent" \
+                --compiler-revision ${compilerRevision} \
+                --cpm-revision ${cpmRevision} \
+                --network-labs-revision ${networkLabsRevision} \
+                2>posture-mismatch.json
+              then
+                echo "FAIL: altered FS-230 posture was accepted" >&2
+                exit 1
+              fi
+              jq -e '
+                .code == "OC_FS230_POSTURE_MISMATCH"
+                and ([.mismatches[].field] | index("tupleRecords") != null)
+              ' posture-mismatch.json >/dev/null
+
+              if fs230-posture "$openconfig_cpm" \
+                --realization openconfig \
+                --canonical-intent "$intent" \
+                --compiler-revision ${compilerRevision} \
+                --cpm-revision ${cpmRevision} \
+                --network-labs-revision ${networkLabsRevision} \
+                --peer-renderer-input forbidden-nixos-output.json \
+                2>peer-rejected.json
+              then
+                echo "FAIL: peer renderer input was accepted" >&2
+                exit 1
+              fi
+              jq -e '.code == "OC_PEER_RENDERER_CONSUMED"' \
+                peer-rejected.json >/dev/null
+
+              if render-openconfig "$openconfig_cpm" \
+                --runtime-target mini-smt-${fs230TraceId}-core-lab-wan \
+                >unexpected-instance.json 2>model-gap.json
+              then
+                echo "FAIL: incomplete OpenConfig model coverage was reported complete" >&2
+                exit 1
+              fi
+              jq -e '.code == "OC_CPM_PARSE_GAP_TYPE"' model-gap.json >/dev/null
+              test ! -s unexpected-instance.json
 
               touch "$out"
             '';
