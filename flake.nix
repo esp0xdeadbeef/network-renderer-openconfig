@@ -14,7 +14,7 @@
 
     network-realization-model.url = "github:esp0xdeadbeef/network-realization-model";
     network-realization-model.inputs.nixpkgs.follows = "nixpkgs";
-    network-realization-schema.url = "github:esp0xdeadbeef/network-realization-schema/8b80339aa1344e1ad178045635bac45fbf36191d";
+    network-realization-schema.url = "github:esp0xdeadbeef/network-realization-schema";
     network-realization-schema.inputs.nixpkgs.follows = "nixpkgs";
 
     network-labs.url = "github:esp0xdeadbeef/network-labs";
