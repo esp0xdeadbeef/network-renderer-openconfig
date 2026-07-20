@@ -27,6 +27,7 @@ Governing construction traces:
 - `FS-162-HDS-010-SDS-010-SMS-010`: instance document emission
 - `FS-162-HDS-010-SDS-020-SMS-010`: pinned YANG validation
 - `FS-162-HDS-010-SDS-030-SMS-010`: fail-closed CPM parsing
+- `FS-162-HDS-010-SDS-040-SMS-010`: comparable FS-230 posture projection
 
 ## Pinned OpenConfig tooling
 
@@ -83,6 +84,26 @@ meaning, so the parser:
 This is concrete construction work for the next change in the owning CPM and
 renderer layers, not a successful renderer result.
 
+## Portable FS-230 posture
+
+The `FS-162-HDS-010-SDS-040-SMS-010` construction check compiles the same
+canonical isolated FS-230 intent independently with the NixOS, CLAB, and
+OpenConfig inventories. Each path uses the same pinned compiler and CPM
+revisions. The check compares this normalized posture:
+
+- IPv6 UDP port 4242 ingress;
+- no NAT66 or source translation;
+- preserved source identity and stateful return;
+- the selected access node, endpoint, and service;
+- no inherited public egress.
+
+The OpenConfig verifier reads CPM directly and rejects peer-renderer input.
+The check reports `cpmPortable=true` because CPM contains the complete portable
+posture. It separately reports `openConfigModelComplete=false` because the
+currently selected OpenConfig model set cannot express every policy field as
+an instance document. This limitation does not weaken the CPM portability
+claim and does not authorize renderer-local defaults.
+
 ## Construction checks
 
 ```bash
@@ -90,10 +111,12 @@ nix flake check --print-build-logs
 bash tests/test.sh
 ```
 
-The check compiles the pinned `openconfig-interfaces` schema and generates a
-real CPM from the pinned `single-wan-uplink-static-egress` input. The focused
-tests exercise the YANG validation negatives and the real-CPM parser negatives
-named by FS-162-HDS-010-SDS-020-SMS-010 and
-FS-162-HDS-010-SDS-030-SMS-010. A green check means the current gap is detected
-deterministically; it does not claim instance emission or resolve the missing
-CPM IANA interface-type authority.
+The checks compile the pinned `openconfig-interfaces` schema, generate a real
+CPM from the pinned `single-wan-uplink-static-egress` input, and compile all
+three FS-230 realization inventories. The focused tests exercise the YANG
+validation negatives, the real-CPM parser negatives, the portable posture
+comparison, altered-posture rejection, CPM-identity rejection, and peer-input
+rejection. A green check means the current instance-document gap is detected
+deterministically and the portable FS-230 posture is present in direct CPM
+input. It does not claim complete OpenConfig instance emission or resolve the
+missing CPM IANA interface-type authority.
