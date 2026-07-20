@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ -z "${OC_RENDERER:-}" ]]; then
-  repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  repo_root="${SMS_TEST_REPO_ROOT:-$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)}"
   cd "$repo_root"
   system="$(nix eval --impure --raw --expr builtins.currentSystem)"
   nix build ".#checks.${system}.canonical-interface-negatives" --no-link

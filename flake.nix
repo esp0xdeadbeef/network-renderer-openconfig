@@ -601,7 +601,7 @@
                   export OC_RENDERER=${self.packages.${system}.render-openconfig}/bin/render-openconfig
                   export OC_JQ=${pkgs.jq}/bin/jq
 
-                ${pkgs.bash}/bin/bash ${./tests/FS-162-HDS-010-SDS-010-SMS-010-instance-document-emission.sh}
+                ${pkgs.bash}/bin/bash ${./tests/lib/FS-162-HDS-010-SDS-010-SMS-010/FS-162-HDS-010-SDS-010-SMS-010.sh}
                   touch "$out"
               '';
 

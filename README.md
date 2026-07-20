@@ -71,9 +71,9 @@ source identity, stateful return, selected endpoint binding, and no inherited
 public egress. It separately records that the selected OpenConfig module set
 does not express the complete ingress-policy posture.
 
-The older direct-CPM mini-POC remains represented as the `OC_RAW_CPM_INPUT`
-negative. It is superseded as a positive architecture path, not deleted as
-historical evidence.
+Raw CPM input is constructed only inside the active `OC_RAW_CPM_INPUT` seeded
+negative and is destroyed with that test's temporary workspace. No positive
+direct-CPM runner, fixture, or historical compatibility path is retained.
 
 ## Construction checks
 
