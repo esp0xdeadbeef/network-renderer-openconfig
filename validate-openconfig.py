@@ -16,7 +16,8 @@ import sys
 from typing import Any
 
 
-VALIDATION_EXIT = 2
+FAIL_CLOSED_EXIT = 2
+YANG_FAILURE_EXIT = 3
 
 
 def emit(code: str, message: str, *, status: str, **details: Any) -> None:
@@ -36,7 +37,7 @@ def emit(code: str, message: str, *, status: str, **details: Any) -> None:
 
 def fail(code: str, message: str, **details: Any) -> int:
     emit(code, message, status="NOT_OK", **details)
-    return VALIDATION_EXIT
+    return YANG_FAILURE_EXIT if code == "OC_YANG_VALIDATION_FAILED" else FAIL_CLOSED_EXIT
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,6 +48,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-root", required=True, type=pathlib.Path)
     parser.add_argument("--flake-lock", required=True, type=pathlib.Path)
     parser.add_argument("--expected-model-rev", required=True)
+    parser.add_argument("--expected-instance-sha256")
+    parser.add_argument("--bundle-identity")
+    parser.add_argument("--renderer-identity")
+    parser.add_argument("--model-catalog")
     return parser.parse_args()
 
 
@@ -99,6 +104,32 @@ def read_openconfig_lock(
 def main() -> int:
     args = parse_args()
 
+    missing_identities = [
+        name
+        for name, value in (
+            ("candidateInstanceSha256", args.expected_instance_sha256),
+            ("bundleIdentity", args.bundle_identity),
+            ("rendererIdentity", args.renderer_identity),
+        )
+        if not isinstance(value, str) or not value
+    ]
+    if missing_identities:
+        return fail(
+            "OC_YANG_IDENTITY_UNBOUND",
+            "YANG validation request lacks required identity bindings",
+            missingIdentities=missing_identities,
+        )
+
+    if isinstance(args.model_catalog, str) and args.model_catalog.startswith(
+        ("http://", "https://")
+    ):
+        return fail(
+            "OC_YANG_NETWORK_ACCESS_DETECTED",
+            "mutable remote YANG catalog resolution is forbidden",
+            modelCatalog=args.model_catalog,
+            networkRequestSent=False,
+        )
+
     if not args.instance.is_file():
         return fail(
             "OC_INSTANCE_DOCUMENT_INVALID",
@@ -119,6 +150,16 @@ def main() -> int:
         return fail(
             "OC_INSTANCE_DOCUMENT_INVALID",
             "instance document root must be an object",
+            instanceDocument=str(args.instance),
+        )
+
+    instance_hash = hashlib.sha256(args.instance.read_bytes()).hexdigest()
+    if instance_hash != args.expected_instance_sha256:
+        return fail(
+            "OC_INSTANCE_DOCUMENT_INVALID",
+            "instance document digest differs from the bound candidate identity",
+            actualInstanceSha256=instance_hash,
+            expectedInstanceSha256=args.expected_instance_sha256,
             instanceDocument=str(args.instance),
         )
 
@@ -161,7 +202,7 @@ def main() -> int:
     )
     if version_result.returncode != 0:
         return fail(
-            "OC_YANG_VALIDATION_ERROR",
+            "OC_YANG_VALIDATION_FAILED",
             "yanglint version probe failed",
             yanglintExitCode=version_result.returncode,
             yanglintStderr=version_result.stderr,
@@ -190,13 +231,15 @@ def main() -> int:
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         return fail(
-            "OC_YANG_VALIDATION_ERROR",
+            "OC_YANG_VALIDATION_FAILED",
             "yanglint rejected the instance document",
+            bundleIdentity=args.bundle_identity,
+            candidateInstanceSha256=instance_hash,
             instanceDocument=str(args.instance),
             flakeLockSha256=lock_hash,
             modelRevision=locked["rev"],
             networkAccess=False,
-            validatedAt=validated_at,
+            rendererIdentity=args.renderer_identity,
             yanglintVersion=yanglint_version,
             yanglintExitCode=result.returncode,
             yanglintStderr=result.stderr,
@@ -207,10 +250,13 @@ def main() -> int:
         "OC_YANG_VALIDATION_PASS",
         "instance document conforms to the pinned OpenConfig model set",
         status="OK",
+        bundleIdentity=args.bundle_identity,
+        candidateInstanceSha256=instance_hash,
         instanceDocument=str(args.instance),
         flakeLockSha256=lock_hash,
         modelRevision=locked["rev"],
         networkAccess=False,
+        rendererIdentity=args.renderer_identity,
         validatedAt=validated_at,
         yanglintVersion=yanglint_version,
     )

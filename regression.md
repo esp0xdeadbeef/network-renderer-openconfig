@@ -1,27 +1,24 @@
 # Resolved regressions
 
-## FS-162-HDS-010-SDS-040-SMS-010: FS-230 posture was not exercised
+## FS-162-HDS-010-SDS-040-SMS-010: FS-230 posture bypassed realization
 
 State: solved
 
-The renderer previously compiled only the `single-wan-uplink-static-egress`
-example and inspected interface records. It had no package or focused test that
-compiled the pinned isolated `FS-230-HDS-010-SDS-010-SMS-040` source, verified
-the IPv6 UDP/4242 no-NAT66 stateful-return posture in CPM, or proved that the
-OpenConfig path consumed the same source identity as the NixOS and CLAB
-construction paths.
+The previous mini-POC compiled separate NixOS, Containerlab, and OpenConfig
+CPM inputs and read each CPM artifact directly. Equal normalized output did not
+prove equal canonical input identity, and the path bypassed the realization
+model and canonical schema gate.
 
-The first missing boundary was `network-renderer-openconfig`: the canonical
-FS-230 source and current CPM implementation already fed the peer NixOS and
-CLAB construction checks, but this renderer did not select or inspect the
-corresponding direct CPM input.
+The migrated controlled construction flow now uses one replacement CPM
+artifact, `network-realization-model`, schema validation, and one canonical
+bundle for all three peer labels. The check proves equal bundle identity and
+equal FS-230 posture, rejects altered canonical posture, rejects a mismatched
+bundle identity, and rejects peer-renderer input. The old direct-CPM fixture is
+retained as the `OC_RAW_CPM_INPUT` negative.
 
-The focused check now compiles NixOS, CLAB, and OpenConfig CPM inputs from the
-same canonical source and pinned compiler/CPM revisions. It proves equal
-normalized posture, rejects altered posture, rejects an unexpected CPM
-identity, and rejects peer-renderer input. The result reports CPM portability
-separately from the incomplete OpenConfig instance-model coverage. Production
-networks, runtime devices, and secrets remain outside this construction test.
+The selected OpenConfig model set still does not express the complete ingress
+policy posture. That limitation is explicit and does not authorize local
+defaults or values from NixOS or Containerlab output.
 
 Proof:
 

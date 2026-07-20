@@ -1,0 +1,25 @@
+{
+  "revision": "openconfig-interface-mapping/v1",
+  "fields": {
+    "/description": {
+      "openconfigPaths": ["config/description"],
+      "ruleIdentity": "canonical-description-to-openconfig-v1"
+    },
+    "/enabled": {
+      "openconfigPaths": ["config/enabled"],
+      "ruleIdentity": "canonical-enabled-to-openconfig-v1"
+    },
+    "/identity/name": {
+      "openconfigPaths": ["name", "config/name"],
+      "ruleIdentity": "canonical-interface-name-to-openconfig-v1"
+    },
+    "/mtu": {
+      "openconfigPaths": ["config/mtu"],
+      "ruleIdentity": "canonical-mtu-to-openconfig-v1"
+    },
+    "/type/ianaIdentity": {
+      "openconfigPaths": ["config/type"],
+      "ruleIdentity": "canonical-iana-type-to-openconfig-v1"
+    }
+  }
+}

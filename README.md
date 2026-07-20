@@ -1,122 +1,100 @@
 # network-renderer-openconfig
 
-`network-renderer-openconfig` is the peer renderer that projects explicit
-`network-control-plane-model` (CPM) semantics into OpenConfig RFC 7951 /
-JSON_IETF instance documents.
+`network-renderer-openconfig` is a peer renderer for validated canonical
+network-realization bundles. It emits RFC 7951 / JSON_IETF OpenConfig instance
+documents and never consumes raw CPM, NixOS output, Containerlab output, or
+another renderer artifact as network-semantic authority.
 
-Current status: construction scaffold, intentionally fail-closed. The project
-does not yet emit an OpenConfig instance document. It proves the current
-CPM-to-OpenConfig contract gap without filling it from NixOS, Containerlab,
-renderer-local defaults, or platform conventions.
-
-## Semantic boundary
+## Contract boundary
 
 ```text
-                              ┌─> network-renderer-nixos
-NFM -> CPM (single authority) ├─> network-renderer-containerlab-linux-backend
-                              └─> network-renderer-openconfig
+CPM replacement or normal pipeline output
+  -> network-realization-model
+  -> network-realization-schema validation
+  -> validated canonical bundle ─┬─> network-renderer-nixos
+                                 ├─> network-renderer-containerlab-linux-backend
+                                 └─> network-renderer-openconfig
+
+validated platform-binding bundle (optional, target mechanics only)
+  -> selected peer renderer
 ```
 
-All three renderers consume CPM directly. OpenConfig output is not an input to
-the NixOS or Containerlab/Linux renderers, and those peer projections are not
-inputs to this renderer. Target-specific syntax and mechanics may differ, but
-no renderer may add network semantics absent from CPM.
+Every peer comparison uses the same canonical bundle identity. A renderer may
+also receive one normalized and validated platform-binding bundle. That bundle
+may contain interface-identity, deployment, secret-delivery, lifecycle, and
+backend categories under one schema and identity. It may not add address,
+route, DNS, NAT, firewall, exposure, egress, policy, or trust authority.
 
-Governing construction traces:
+## OpenConfig mapping
 
-- `FS-162-HDS-010-SDS-010-SMS-010`: instance document emission
-- `FS-162-HDS-010-SDS-020-SMS-010`: pinned YANG validation
-- `FS-162-HDS-010-SDS-030-SMS-010`: fail-closed CPM parsing
-- `FS-162-HDS-010-SDS-040-SMS-010`: comparable FS-230 posture projection
+The renderer requires explicit canonical interface identity, including an IANA
+interface-type identity. The versioned
+`openconfig-interface-mapping-v1.json` file maps each selected canonical leaf
+to OpenConfig paths and supplies a rule identity. Every emitted field records:
 
-## Pinned OpenConfig tooling
+- canonical bundle identity;
+- canonical path;
+- upstream CPM source path and transformation rule;
+- OpenConfig output path;
+- OpenConfig mapping-rule identity.
 
-The flake pins `nixpkgs`, `openconfig/public`, CPM, and the construction input
-in `flake.lock`. `libyang` provides `yanglint`; the app names the executable
-explicitly because the package has no reliable default main program.
+Unmapped canonical paths are terminal unless a versioned mapping contract
+records a deterministic limitation. Renderer-local defaults and type
+inference from names, `sourceKind`, adapter class, or peer output are terminal.
+
+## Pinned YANG validation
+
+The flake pins `openconfig/public`, `nixpkgs`, the canonical schema/model, CPM,
+and construction inputs. `validate-oc-instance` validates the candidate against
+the pinned OpenConfig interfaces and IANA interface-type modules without
+runtime network discovery. The renderer releases an accepted instance only
+after that gate succeeds.
 
 ```bash
+nix run .#render-openconfig -- ./validated-canonical-bundle.json
+candidate_sha="$(sha256sum ./openconfig-instance.json | cut -d ' ' -f 1)"
+canonical_bundle_identity="$(jq -r .bundleIdentity ./validated-canonical-bundle.json)"
+nix run .#validate-oc-instance -- ./openconfig-instance.json \
+  --expected-instance-sha256 "$candidate_sha" \
+  --bundle-identity "$canonical_bundle_identity" \
+  --renderer-identity network-renderer-openconfig:openconfig-interface-mapping/v1
 nix run .#yanglint -- --version
 ```
 
-Validate a future RFC 7951 / JSON_IETF instance document with:
+## Controlled FS-230 construction
 
-```bash
-nix run .#validate-oc-instance -- ./result.json
-```
+`FS-162-HDS-010-SDS-040-SMS-010` uses one replacement CPM artifact, one
+realization-model pass, and one validated canonical bundle for the NixOS,
+Containerlab, and OpenConfig peer comparison. The check proves equal bundle
+identity and equal normalized posture for IPv6 UDP ingress, no NAT66, preserved
+source identity, stateful return, selected endpoint binding, and no inherited
+public egress. It separately records that the selected OpenConfig module set
+does not express the complete ingress-policy posture.
 
-The validator first checks the committed OpenConfig lock identity, required
-module files, and JSON instance syntax. It then loads the pinned model paths
-and explicitly implements
-`openconfig/public/third_party/ietf/iana-if-type.yang`. A search path alone
-is not sufficient for JSON identity-ref values such as
-`iana-if-type:ethernetCsmacd`. Results include the model revision, flake-lock
-SHA-256, `yanglint` version, validation time, and a structured diagnostic
-code.
-
-## Current CPM parsing result
-
-Run the parser against a CPM JSON artifact and an exact runtime target:
-
-```bash
-nix run .#render-openconfig -- \
-  ./output-control-plane-model.json \
-  --runtime-target esp0xdeadbeef-site-a-s-router-core-wan
-```
-
-The current CPM provides `runtimeIfName`, `sourceKind`, and `adapterClass`, but
-does not provide an explicit IANA interface-type identity. In the pinned
-`openconfig-interfaces` schema, `config.type` is mandatory. Treating
-`sourceKind` or `adapterClass` as `iana-if-type:ethernetCsmacd` would invent
-meaning, so the parser:
-
-1. records traceable mappings such as `runtimeIfName` to `name` and
-   `config.name`;
-2. records `OC_CPM_PARSE_GAP_TYPE` for `config.type` plus any other missing
-   deterministic fields;
-3. records current CPM fields outside the selected
-   `openconfig-interfaces` surface as
-   `OC_CPM_PARSE_UNSUPPORTED_FIELD`;
-4. rejects any peer-renderer input with `OC_CPM_PARSE_PEER_CONSUMED`;
-5. writes the structured gap record to stderr;
-6. emits no instance document and exits with status 2.
-
-This is concrete construction work for the next change in the owning CPM and
-renderer layers, not a successful renderer result.
-
-## Portable FS-230 posture
-
-The `FS-162-HDS-010-SDS-040-SMS-010` construction check compiles the same
-canonical isolated FS-230 intent independently with the NixOS, CLAB, and
-OpenConfig inventories. Each path uses the same pinned compiler and CPM
-revisions. The check compares this normalized posture:
-
-- IPv6 UDP port 4242 ingress;
-- no NAT66 or source translation;
-- preserved source identity and stateful return;
-- the selected access node, endpoint, and service;
-- no inherited public egress.
-
-The OpenConfig verifier reads CPM directly and rejects peer-renderer input.
-The check reports `cpmPortable=true` because CPM contains the complete portable
-posture. It separately reports `openConfigModelComplete=false` because the
-currently selected OpenConfig model set cannot express every policy field as
-an instance document. This limitation does not weaken the CPM portability
-claim and does not authorize renderer-local defaults.
+The older direct-CPM mini-POC remains represented as the `OC_RAW_CPM_INPUT`
+negative. It is superseded as a positive architecture path, not deleted as
+historical evidence.
 
 ## Construction checks
 
 ```bash
-nix flake check --print-build-logs
+nix flake check --all-systems --print-build-logs
 bash tests/test.sh
 ```
 
-The checks compile the pinned `openconfig-interfaces` schema, generate a real
-CPM from the pinned `single-wan-uplink-static-egress` input, and compile all
-three FS-230 realization inventories. The focused tests exercise the YANG
-validation negatives, the real-CPM parser negatives, the portable posture
-comparison, altered-posture rejection, CPM-identity rejection, and peer-input
-rejection. A green check means the current instance-document gap is detected
-deterministically and the portable FS-230 posture is present in direct CPM
-input. It does not claim complete OpenConfig instance emission or resolve the
-missing CPM IANA interface-type authority.
+The trace-literal emission test exercises all eight seeded negatives from
+`FS-162-HDS-010-SDS-010-SMS-010`. Each case asserts the exact diagnostic,
+exit behavior, empty accepted stdout, deterministic rerun, and recovery with
+the valid canonical fixture. The principal diagnostics are:
+
+- `OC_RAW_CPM_INPUT`;
+- `OC_REQUIRED_CANONICAL_FIELD_MISSING`;
+- `OC_CANONICAL_PATH_UNMAPPED`;
+- `OC_TYPE_IDENTITY_UNMAPPED`;
+- `OC_PEER_RENDERER_CONSUMED`;
+- `OC_RENDERER_DEFAULT_INVENTED`;
+- `OC_OUTPUT_WITHOUT_PROVENANCE`;
+- `OC_YANG_VALIDATION_FAILED`.
+
+These checks are construction evidence only. They do not claim deployment to
+an OpenConfig device.
