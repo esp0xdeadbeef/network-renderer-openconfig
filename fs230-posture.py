@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the portable FS-230 posture directly from a CPM artifact.
+"""Verify the portable FS-230 posture from one validated canonical bundle.
 
 Governing specification: FS-162-HDS-010-SDS-040-SMS-010.
 """
@@ -48,13 +48,48 @@ def sha256(path: pathlib.Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def site_from_cpm(payload: dict[str, Any]) -> dict[str, Any]:
-    model = payload.get("control_plane_model")
-    data = model.get("data") if isinstance(model, dict) else None
+def canonical_model_from_bundle(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("kind") != "network-realization-bundle":
+        raise ValueError("OC_RAW_CPM_INPUT: expected network-realization-bundle")
+    validation = payload.get("validation")
+    bundle_identity = payload.get("bundleIdentity")
+    if (
+        not isinstance(validation, dict)
+        or validation.get("valid") is not True
+        or validation.get("artifactIdentity") != bundle_identity
+        or artifact_digest(payload) != bundle_identity
+    ):
+        raise ValueError("canonical bundle validation or digest is invalid")
+    network = payload.get("network")
+    model = network.get("data") if isinstance(network, dict) else None
+    if not isinstance(model, dict):
+        raise ValueError("canonical bundle lacks network.data")
+    return model
+
+
+def artifact_digest(payload: dict[str, Any]) -> str:
+    identity_payload = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"bundleIdentity", "validation"}
+    }
+    return hashlib.sha256(
+        json.dumps(
+            identity_payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def site_from_bundle(payload: dict[str, Any]) -> dict[str, Any]:
+    model = canonical_model_from_bundle(payload)
+    data = model.get("data")
     enterprise = data.get("mini-smt") if isinstance(data, dict) else None
     site = enterprise.get(TRACE_ID) if isinstance(enterprise, dict) else None
     if not isinstance(site, dict):
-        raise ValueError(f"missing control_plane_model.data.mini-smt.{TRACE_ID}")
+        raise ValueError(f"missing canonical network.data.data.mini-smt.{TRACE_ID}")
     return site
 
 
@@ -151,15 +186,15 @@ def inspect_posture(site: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Verify the portable FS-230 posture directly from CPM"
+        description="Verify the portable FS-230 posture from a canonical bundle"
     )
-    parser.add_argument("cpm", type=pathlib.Path)
+    parser.add_argument("bundle", type=pathlib.Path)
     parser.add_argument("--realization", required=True, choices=("nixos", "clab", "openconfig"))
     parser.add_argument("--canonical-intent", required=True, type=pathlib.Path)
     parser.add_argument("--compiler-revision", required=True)
     parser.add_argument("--cpm-revision", required=True)
     parser.add_argument("--network-labs-revision", required=True)
-    parser.add_argument("--expected-cpm-sha256")
+    parser.add_argument("--expected-bundle-identity")
     parser.add_argument("--peer-renderer-input", type=pathlib.Path)
     return parser.parse_args()
 
@@ -174,31 +209,35 @@ def main() -> int:
         )
 
     try:
-        payload = read_json(args.cpm)
-        artifact_hash = sha256(args.cpm)
+        payload = read_json(args.bundle)
+        canonical_model = canonical_model_from_bundle(payload)
         intent_hash = sha256(args.canonical_intent)
-        posture, mismatches = inspect_posture(site_from_cpm(payload))
+        posture, mismatches = inspect_posture(site_from_bundle(payload))
     except (OSError, ValueError) as error:
         return fail(
             "OC_FS230_POSTURE_MISMATCH",
-            "FS-230 CPM posture cannot be resolved",
+            "FS-230 canonical posture cannot be resolved",
             error=str(error),
             realization=args.realization,
         )
 
-    if args.expected_cpm_sha256 is not None and artifact_hash != args.expected_cpm_sha256:
+    bundle_identity = payload["bundleIdentity"]
+    if (
+        args.expected_bundle_identity is not None
+        and bundle_identity != args.expected_bundle_identity
+    ):
         return fail(
-            "OC_FS230_CPM_IDENTITY_MISMATCH",
-            "OpenConfig consumed a different CPM artifact identity",
-            actualCpmSha256=artifact_hash,
-            expectedCpmSha256=args.expected_cpm_sha256,
+            "OC_FS230_BUNDLE_IDENTITY_MISMATCH",
+            "peer comparison consumed a different canonical bundle identity",
+            actualBundleIdentity=bundle_identity,
+            expectedBundleIdentity=args.expected_bundle_identity,
             realization=args.realization,
         )
 
     if mismatches:
         return fail(
             "OC_FS230_POSTURE_MISMATCH",
-            "FS-230 CPM posture differs from the controlled requirement",
+            "FS-230 canonical posture differs from the controlled requirement",
             mismatches=mismatches,
             realization=args.realization,
         )
@@ -206,24 +245,28 @@ def main() -> int:
     emit(
         sys.stdout,
         "OC_FS230_POSTURE_PASS",
-        "FS-230 posture is portable in direct CPM input",
+        "FS-230 posture is portable in one validated canonical bundle",
         "OK",
-        cpmArtifactSha256=artifact_hash,
-        cpmPortable=True,
+        bundleIdentity=bundle_identity,
+        canonicalPortable=True,
         openConfigModelComplete=False,
         networkAccess=False,
         posture=posture,
         realization=args.realization,
         sourceIdentity={
             "canonicalIntentSha256": intent_hash,
+            "bundleIdentity": bundle_identity,
             "compilerRevision": args.compiler_revision,
             "cpmRevision": args.cpm_revision,
             "networkLabsRevision": args.network_labs_revision,
+            "sourceCpmIdentity": payload.get("sources", {})
+            .get("cpm", {})
+            .get("identity"),
         },
         limitations=[
             {
                 "code": "OC_PROD_LIMITATION",
-                "cpmPath": "runtimeTargets.*.natIntent.publicIngress",
+                "canonicalPath": "/network/data/data/mini-smt/*/runtimeTargets/*/natIntent/publicIngress",
                 "openconfigPath": None,
                 "reason": "selected OpenConfig model set does not yet express the complete ingress policy posture",
             }
