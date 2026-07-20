@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="${SMS_TEST_REPO_ROOT:-$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)}"
 
-bash "${repo_root}/tests/FS-162-HDS-010-SDS-020-SMS-010-yang-model-validation.sh"
-bash "${repo_root}/tests/FS-162-HDS-010-SDS-010-SMS-010-instance-document-emission.sh"
-bash "${repo_root}/tests/FS-162-HDS-010-SDS-030-SMS-010-cpm-interface-parsing-fail-closed.sh"
-bash "${repo_root}/tests/FS-162-HDS-010-SDS-040-SMS-010-s-router-prod-comparable-projection.sh"
+mapfile -t tests < <(
+  find "${repo_root}/tests" -maxdepth 1 -regextype posix-extended \( -type f -o -type l \) \
+    -regex '.*/FS-[0-9]+-HDS-[0-9]+-SDS-[0-9]+-SMS-[0-9]+\.sh' \
+    -printf '%p\n' | LC_ALL=C sort
+)
+
+for test_path in "${tests[@]}"; do
+  bash "${test_path}"
+done

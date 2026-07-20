@@ -23,6 +23,6 @@ defaults or values from NixOS or Containerlab output.
 Proof:
 
 ```bash
-bash tests/FS-162-HDS-010-SDS-040-SMS-010-s-router-prod-comparable-projection.sh
+bash tests/FS-162-HDS-010-SDS-040-SMS-010.sh
 nix flake check --all-systems
 ```
