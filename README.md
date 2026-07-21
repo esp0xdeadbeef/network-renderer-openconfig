@@ -25,6 +25,12 @@ may contain interface-identity, deployment, secret-delivery, lifecycle, and
 backend categories under one schema and identity. It may not add address,
 route, DNS, NAT, firewall, exposure, egress, policy, or trust authority.
 
+The controlled construction API is
+`libBySystem.<system>.renderer.canonical.validateInput`. It accepts `bundle`
+and optional `platformBinding`, requires target `openconfig` for a supplied
+binding bundle, and rejects raw CPM or unvalidated canonical input before any
+OpenConfig mapping runs.
+
 ## OpenConfig mapping
 
 The renderer requires explicit canonical interface identity, including an IANA
