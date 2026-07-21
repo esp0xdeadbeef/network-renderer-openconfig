@@ -17,7 +17,10 @@
     network-realization-schema.url = "github:esp0xdeadbeef/network-realization-schema";
     network-realization-schema.inputs.nixpkgs.follows = "nixpkgs";
 
-    network-labs.url = "github:esp0xdeadbeef/network-labs";
+    network-labs = {
+      url = "github:esp0xdeadbeef/network-labs";
+      flake = false;
+    };
   };
 
   outputs =
@@ -52,8 +55,22 @@
         flakeLock.nodes.${networkLabsNodeName}.locked.rev
           or (throw "flake.lock lacks the network-labs revision");
       fs230TraceId = "FS-230-HDS-010-SDS-010-SMS-040";
+      mkSystemLib = _system: {
+        renderer.canonical.validateInput =
+          {
+            bundle,
+            platformBinding ? null,
+          }:
+          network-realization-model.lib.validateRendererInput {
+            inherit bundle platformBinding;
+            expectedTarget = "openconfig";
+          };
+      };
     in
     {
+      libBySystem = forAllSystems mkSystemLib;
+      lib = mkSystemLib "x86_64-linux";
+
       packages = forAllSystems (
         system:
         let
@@ -341,8 +358,33 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
           currentCpmJson = self.packages.${system}.current-cpm-json;
+          boundaryInput = import "${network-realization-model}/examples/cpm-result.nix";
+          boundaryBundle = network-realization-model.lib.realize {
+            input = boundaryInput;
+            requestScope = {
+              kind = "complete-artifact";
+              identity = "openconfig-canonical-boundary";
+            };
+            rootLockIdentity = "network-renderer-openconfig-flake-lock";
+            producerRevision = network-realization-model.rev;
+          };
+          boundaryAccepted = self.libBySystem.${system}.renderer.canonical.validateInput {
+            bundle = boundaryBundle;
+          };
+          rawBoundaryRejected =
+            !(builtins.tryEval (
+              builtins.deepSeq (self.libBySystem.${system}.renderer.canonical.validateInput {
+                bundle = boundaryInput;
+              }) true
+            )).success;
         in
+        assert boundaryAccepted.bundleIdentity == boundaryBundle.bundleIdentity;
+        assert rawBoundaryRejected;
         {
+          canonical-renderer-input = pkgs.runCommand "openconfig-canonical-renderer-input" { } ''
+            touch "$out"
+          '';
+
           openconfig-schema =
             pkgs.runCommand "openconfig-interface-schema-validation"
               {
