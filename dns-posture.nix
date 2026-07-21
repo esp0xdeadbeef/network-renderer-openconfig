@@ -86,7 +86,11 @@ let
     }:
     if peerRendererInput != null then
       reject "OC_DNS_PEER_RENDERER_CONSUMED" "peer renderer output cannot supply OpenConfig DNS posture" {
-        sourceRenderer = peerRendererInput;
+        sourceRenderer =
+          if builtins.isAttrs peerRendererInput then
+            peerRendererInput.renderer or "<unknown>"
+          else
+            peerRendererInput;
         destinationRenderer = "openconfig";
       }
     else if (bundle.kind or null) != "network-realization-bundle" then
@@ -130,6 +134,32 @@ let
               builtins.filter (match: builtins.elem 53 (match.dports or [ ])) matches
             )
           );
+          requiredCoverage = builtins.concatLists (
+            map
+              (
+                family:
+                map (proto: { inherit family proto; }) [
+                  "tcp"
+                  "udp"
+                ]
+              )
+              [
+                "ipv4"
+                "ipv6"
+              ]
+          );
+          missingCoverage = builtins.filter (
+            required:
+            !(builtins.any (
+              match:
+              builtins.elem 53 (match.dports or [ ])
+              && (match.proto or null) == required.proto
+              && builtins.elem (match.family or null) [
+                "any"
+                required.family
+              ]
+            ) matches)
+          ) requiredCoverage;
           providerTargets = builtins.filter (
             target: (target.logicalNode.name or null) == (upstream.node or null)
           ) (builtins.attrValues (siteData.runtimeTargets or { }));
@@ -213,22 +243,18 @@ let
             { }
         else if builtins.length uplinks != 1 then
           reject "OC_DNS_EGRESS_SELECTION_AMBIGUOUS" "recursive DNS selected more than one egress identity" {
-            candidates = sortedUnique uplinks;
+            candidates = map (candidate: builtins.hashString "sha256" candidate) (sortedUnique uplinks);
           }
         else if
           families != [
             "ipv4"
             "ipv6"
           ]
-          ||
-            transports != [
-              "tcp"
-              "udp"
-            ]
+          || missingCoverage != [ ]
         then
           reject "OC_DNS_FAMILY_INCOMPLETE" "dual-stack UDP and TCP DNS coverage is incomplete" {
             addressFamilies = families;
-            inherit transports;
+            inherit missingCoverage transports;
           }
         else if !localOnlySafe then
           reject "OC_DNS_LOCAL_ONLY_LEAK" "local-only requester gained recursive or transitive authority" { }
