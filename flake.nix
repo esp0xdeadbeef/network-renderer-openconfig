@@ -55,17 +55,28 @@
         flakeLock.nodes.${networkLabsNodeName}.locked.rev
           or (throw "flake.lock lacks the network-labs revision");
       fs230TraceId = "FS-230-HDS-010-SDS-010-SMS-040";
-      mkSystemLib = _system: {
-        renderer.canonical.validateInput =
-          {
-            bundle,
-            platformBinding ? null,
-          }:
-          network-realization-model.lib.validateRendererInput {
-            inherit bundle platformBinding;
-            expectedTarget = "openconfig";
+      mkSystemLib =
+        _system:
+        let
+          dnsPosture = import ./dns-posture.nix {
+            inherit network-realization-model;
+            lib = nixpkgs.lib;
           };
-      };
+        in
+        {
+          renderer.canonical = {
+            validateInput =
+              {
+                bundle,
+                platformBinding ? null,
+              }:
+              network-realization-model.lib.validateRendererInput {
+                inherit bundle platformBinding;
+                expectedTarget = "openconfig";
+              };
+            inherit (dnsPosture) project validateProjection;
+          };
+        };
     in
     {
       libBySystem = forAllSystems mkSystemLib;
