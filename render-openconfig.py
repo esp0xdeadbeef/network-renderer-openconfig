@@ -194,14 +194,47 @@ def canonical_interfaces(bundle: dict[str, Any]) -> list[dict[str, Any]] | None:
 
 
 def coverage_by_destination(bundle: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Map canonical destination path -> upstream coverage row.
+
+    Coverage is a predicate over the bundle, not a payload in it. The canonical
+    bundle no longer ships one `upstreamCoverage` row per CPM leaf, so the rows
+    are recomputed here from the bundle's own network content plus the declared
+    invariants. When a bundle still carries the expanded array it is used as-is.
+    """
     rows = bundle.get("upstreamCoverage")
-    if not isinstance(rows, list):
+    if isinstance(rows, list):
+        return {
+            row["destinationPath"]: row
+            for row in rows
+            if isinstance(row, dict) and isinstance(row.get("destinationPath"), str)
+        }
+
+    network = bundle.get("network")
+    data = network.get("data") if isinstance(network, dict) else None
+    if not isinstance(data, dict):
         return {}
-    return {
-        row["destinationPath"]: row
-        for row in rows
-        if isinstance(row, dict) and isinstance(row.get("destinationPath"), str)
-    }
+    invariants = bundle.get("coverageInvariants")
+    classification = "realized"
+    transformation_rule = "cpm-identity-v1"
+    if isinstance(invariants, dict):
+        if isinstance(invariants.get("classification"), str):
+            classification = invariants["classification"]
+        if isinstance(invariants.get("transformationRule"), str):
+            transformation_rule = invariants["transformationRule"]
+
+    prefix = "/control_plane_model"
+    recomputed: dict[str, dict[str, Any]] = {}
+    for source_path in leaf_paths(data, ""):
+        source = f"{prefix}{source_path}"
+        if not source_path:
+            continue
+        recomputed[f"/network/data{source_path}"] = {
+            "sourcePath": source,
+            "destinationPath": f"/network/data{source_path}",
+            "classification": classification,
+            "transformationRule": transformation_rule,
+        }
+    return recomputed
 
 
 def build_mapping(
