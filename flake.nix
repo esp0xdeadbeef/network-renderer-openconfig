@@ -393,23 +393,29 @@
         assert rawBoundaryRejected;
         {
           # A real CPM, compiled by network-control-plane-model from a real
-          # intent, must carry the interface identity this renderer maps.
+          # intent with the OPENCONFIG inventory, must carry the interface
+          # identity this renderer maps -- and the bundle realized from it must
+          # be accepted end to end.
           #
           # REGRESSION NOTE (measured 2026-11-21): every other positive check in
           # this file renders `network-realization-model/examples/cpm-result.nix`,
-          # which HAND-WRITES `canonicalInterfaces` -- so the mapping is tested
-          # and the producer is not. The one real CPM this repository compiles
-          # (`currentCpm`) appears only as `OC_RAW_CPM`, in a case that asserts
-          # render-openconfig REJECTS it, and the check that should have covered
-          # this boundary was `touch "$out"` under the name
-          # `canonical-renderer-input`. A site's HAT run against a real model
-          # found the gap: the CPM publishes no `canonicalInterfaces` at all, so
-          # no real site can be rendered here.
+          # which HAND-WRITES `canonicalInterfaces`. So the mapping was tested
+          # and the producer was not. The real CPMs this repository compiles
+          # appeared only as `OC_RAW_CPM` (a case asserting render-openconfig
+          # REJECTS them), and the check named after this boundary was
+          # `touch "$out"`. A site HAT run against a real model found the gap.
           #
-          # This case compiles the CPM of the site HAT's own cobalt intent and
-          # requires: the CPM publishes a non-empty canonical interface
-          # collection, and the bundle realized from it is accepted by
-          # render-openconfig with YANG validation passing.
+          # Row and inventory follow the convention the other renderers use:
+          # `network-labs/GAMP/SMT/<row>/intent.nix` with the inventory for the
+          # target (`inventory-nixos.nix` for the NixOS renderer,
+          # `inventory-clab.nix` for containerlab, `inventory-openconfig.nix`
+          # here). Nothing is hardcoded beyond the row id, and that resolves
+          # against the network-labs flake input.
+          #
+          # THIS CHECK CURRENTLY FAILS, on purpose: it is the guard for a defect
+          # that is not yet fixed. Do not make it pass by injecting canonical
+          # interfaces here -- the renderer must not invent them, and the fixture
+          # that does is the reason the gap went unseen.
           canonical-renderer-input =
             pkgs.runCommand "openconfig-canonical-renderer-input"
               {
@@ -421,7 +427,7 @@
               ''
                 set -euo pipefail
 
-                cpm=${currentCpmJson}
+                cpm=${self.packages.${system}.fs230-cpm-openconfig-json}
                 count=$(jq -r '(.control_plane_model.canonicalInterfaces // []) | length' "$cpm")
 
                 if [ "$count" -eq 0 ]; then
@@ -429,24 +435,33 @@
             FAIL canonical-renderer-input: a real CPM publishes no canonicalInterfaces.
 
               network-renderer-openconfig maps `canonicalInterfaces[]`, each with an
-              explicit `identity.name` and an IANA `type.ianaIdentity`. It will not
-              infer a type from a name or a `sourceKind`, by design.
+              explicit `identity.name` and an IANA `type.ianaIdentity`, and refuses to
+              infer a type from a name or a `sourceKind` -- by design.
 
-              The CPM compiled from a real intent publishes `runtimeTargets` instead:
-              per-target interfaces named after the realization, with addresses and
-              routes. No peer renderer can map that. The fixture this repository's
-              other checks render (`network-realization-model/examples/cpm-result.nix`)
-              hand-writes the missing field, which is why the mapping tests pass while
-              no real site can be rendered.
+              The CPM compiled from a real intent (row FS-230-HDS-010-SDS-010-SMS-040,
+              inventory-openconfig.nix) publishes `runtimeTargets` instead: per-target
+              interfaces named after the realization, with addresses and routes. No peer
+              renderer can map that, so no real site can be rendered here.
+
+              The fixture this repository's other checks render
+              (network-realization-model/examples/cpm-result.nix) HAND-WRITES the missing
+              field, which is why the mapping tests pass while nothing real can render.
 
               Fix in network-control-plane-model: publish canonicalInterfaces with
-              modelled interface identity and IANA type. Not here -- this renderer
-              must not invent it.
+              modelled interface identity and IANA type. Not here -- this renderer must
+              not invent it.
             MESSAGE
                   exit 1
                 fi
 
                 echo "canonicalInterfaces present: $count" >&2
+                render-openconfig ${self.packages.${system}.fs230-canonical-bundle-json} \
+                  >accepted.json
+                jq -e '
+                  .code == "OC_INSTANCE_ACCEPTED"
+                  and .status == "OK"
+                  and .yangValidation.code == "OC_YANG_VALIDATION_PASS"
+                ' accepted.json >/dev/null
                 touch "$out"
               '';
 
