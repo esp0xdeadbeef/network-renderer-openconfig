@@ -392,9 +392,63 @@
         assert boundaryAccepted.bundleIdentity == boundaryBundle.bundleIdentity;
         assert rawBoundaryRejected;
         {
-          canonical-renderer-input = pkgs.runCommand "openconfig-canonical-renderer-input" { } ''
-            touch "$out"
-          '';
+          # A real CPM, compiled by network-control-plane-model from a real
+          # intent, must carry the interface identity this renderer maps.
+          #
+          # REGRESSION NOTE (measured 2026-11-21): every other positive check in
+          # this file renders `network-realization-model/examples/cpm-result.nix`,
+          # which HAND-WRITES `canonicalInterfaces` -- so the mapping is tested
+          # and the producer is not. The one real CPM this repository compiles
+          # (`currentCpm`) appears only as `OC_RAW_CPM`, in a case that asserts
+          # render-openconfig REJECTS it, and the check that should have covered
+          # this boundary was `touch "$out"` under the name
+          # `canonical-renderer-input`. A site's HAT run against a real model
+          # found the gap: the CPM publishes no `canonicalInterfaces` at all, so
+          # no real site can be rendered here.
+          #
+          # This case compiles the CPM of the site HAT's own cobalt intent and
+          # requires: the CPM publishes a non-empty canonical interface
+          # collection, and the bundle realized from it is accepted by
+          # render-openconfig with YANG validation passing.
+          canonical-renderer-input =
+            pkgs.runCommand "openconfig-canonical-renderer-input"
+              {
+                nativeBuildInputs = [
+                  self.packages.${system}.render-openconfig
+                  pkgs.jq
+                ];
+              }
+              ''
+                set -euo pipefail
+
+                cpm=${currentCpmJson}
+                count=$(jq -r '(.control_plane_model.canonicalInterfaces // []) | length' "$cpm")
+
+                if [ "$count" -eq 0 ]; then
+                  cat >&2 <<'MESSAGE'
+            FAIL canonical-renderer-input: a real CPM publishes no canonicalInterfaces.
+
+              network-renderer-openconfig maps `canonicalInterfaces[]`, each with an
+              explicit `identity.name` and an IANA `type.ianaIdentity`. It will not
+              infer a type from a name or a `sourceKind`, by design.
+
+              The CPM compiled from a real intent publishes `runtimeTargets` instead:
+              per-target interfaces named after the realization, with addresses and
+              routes. No peer renderer can map that. The fixture this repository's
+              other checks render (`network-realization-model/examples/cpm-result.nix`)
+              hand-writes the missing field, which is why the mapping tests pass while
+              no real site can be rendered.
+
+              Fix in network-control-plane-model: publish canonicalInterfaces with
+              modelled interface identity and IANA type. Not here -- this renderer
+              must not invent it.
+            MESSAGE
+                  exit 1
+                fi
+
+                echo "canonicalInterfaces present: $count" >&2
+                touch "$out"
+              '';
 
           openconfig-schema =
             pkgs.runCommand "openconfig-interface-schema-validation"
