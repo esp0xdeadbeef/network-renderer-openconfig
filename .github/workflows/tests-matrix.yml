@@ -62,15 +62,108 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # The flake check runs FIRST, in this workflow, so a commit that does not even
-  # evaluate never starts one job per test. It used to live in `ci.yml`, which ran
-  # in parallel: a green "CI" badge then meant "the flake evaluates", while the
-  # tests that decide the commit could still be running or red, and two workflows
-  # on one push is two answerable questions instead of one.
+  # The ordering this workflow exists for, asserted BEFORE anything expensive.
+  #
+  # This replaced `tests/test-s88-ci-gate.sh`, which read the repository's last
+  # GitHub Actions run to judge the commit. That worked while two workflows ran on
+  # one push -- the matrix ran the test, the gate looked at `CI` -- and became
+  # circular the moment they were merged into one: the newest run of the
+  # repository IS the matrix, so excluding the current run left the previous
+  # commit's suite, and a green commit went red because of history.
+  #
+  # A workflow cannot judge the run that contains it, but it can judge its own
+  # structure. It runs first and takes seconds: a gate that is misconfigured must
+  # fail now, not after a two-hour flake check has queued every test job.
+  workflow-structure:
+    name: "workflow structure"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      # The ubuntu image ships Nix. Installing it again means downloading an
+      # installer and re-installing Nix on every run -- ~25s per job, up to 288
+      # jobs -- to produce the binary the runner already has. Flakes are off by
+      # default, so this is the only setup any job needs.
+      NIX_CONFIG: "experimental-features = nix-command flakes"
+    steps:
+      - uses: actions/checkout@v6
+      # ---------------------------------------------------------------------
+      # The ordering this workflow exists for, asserted where it can be
+      # checked offline: the flake check gates every test job.
+      #
+      # This replaced `tests/test-s88-ci-gate.sh`, which read the repository's
+      # last GitHub Actions run to judge the commit. That worked while two
+      # workflows ran on one push -- the matrix ran the test, the gate looked at
+      # `CI` -- and became circular the moment they were merged into one: the
+      # newest run of the repository IS the matrix, so excluding the current run
+      # left the previous commit's suite. Its verdict was "the last commit was
+      # green", which flips a green commit red because of history.
+      #
+      # A workflow cannot judge the run that contains it, but it can judge its
+      # own structure, and that is the property: flake first, tests behind it.
+      # ---------------------------------------------------------------------
+      - name: "The flake check gates every test job"
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'CHECK'
+          import pathlib, re, sys
+
+          workflow = pathlib.Path(".github/workflows/tests-matrix.yml")
+          text = workflow.read_text()
+          failures = []
+
+          # --- 1. no second workflow racing this one on push -------------------------
+          racing = sorted(
+              p.name
+              for p in pathlib.Path(".github/workflows").glob("*.yml")
+              if p.name != workflow.name and re.search(r"^\s*push:", p.read_text(), re.M)
+          )
+          if racing:
+              failures.append(f"workflow(s) also triggered by push: {', '.join(racing)}")
+
+          # --- 2. one job per test, gated: flake-check -> list -> test ---------------
+          # Line parse, not a regex over the file. A pattern like
+          #   (?:    .*\n|      .*\n)*?    needs: X
+          # is ambiguous at every line boundary and backtracks exponentially when it fails
+          # to match; on a 400-line file that is minutes, not a check.
+          jobs = {}
+          current = None
+          for line in text.splitlines():
+              stripped = line.strip()
+              if line.startswith("  ") and not line.startswith("   ") and stripped.endswith(":") and not stripped.startswith("#"):
+                  current = stripped[:-1]
+                  jobs[current] = {"needs": []}
+              elif current and line.startswith("    needs:"):
+                  value = line.split(":", 1)[1].strip()
+                  jobs[current]["needs"] = [n.strip() for n in value.strip("[]").split(",") if n.strip()]
+
+          if "flake-check" not in jobs:
+              failures.append("no flake-check job in this workflow")
+          if "flake-check" not in jobs.get("list", {}).get("needs", []):
+              failures.append("list does not declare `needs: flake-check`")
+          if "list" not in jobs.get("test", {}).get("needs", []):
+              failures.append("test does not declare `needs: list`")
+
+          if failures:
+              print("FAIL FLAKE-GATE: the workflow does not gate tests behind the flake check", file=sys.stderr)
+              for f in failures:
+                  print(f"  - {f}", file=sys.stderr)
+              print("  A green badge must mean the tests ran, not that the flake evaluates.", file=sys.stderr)
+              sys.exit(1)
+          print("PASS FLAKE-GATE: one workflow; flake-check -> list -> test")
+          CHECK
+
   flake-check:
     name: "nix flake check"
+    needs: workflow-structure
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    env:
+      # The ubuntu image ships Nix. Installing it again means downloading an
+      # installer and re-installing Nix on every run -- ~25s per job, up to 288
+      # jobs -- to produce the binary the runner already has. Flakes are off by
+      # default, so this is the only setup any job needs.
+      NIX_CONFIG: "experimental-features = nix-command flakes"
     steps:
       # Test/nix scratch must not depend on the image's /tmp. The runner exports
       # RUNNER_TEMP for exactly this purpose; publish it to the remaining steps
@@ -83,7 +176,30 @@ jobs:
             printf '%s=%s\n' "$name" "$RUNNER_TEMP" >> "$GITHUB_ENV"
           done
       - uses: actions/checkout@v6
-      - uses: DeterminateSystems/determinate-nix-action@v3
+
+      # Refresh the pins BEFORE evaluating anything.
+      #
+      # The committed lock is what the repository claims to work with, and it goes
+      # stale silently: measured this session, `network-renderer-nixos` still pinned
+      # `network-realization-model` at a revision that hands renderers the plain CPM,
+      # so its boundary check passed against code that no longer existed. A nightly
+      # bumper discovers that a day later; this discovers it on the commit.
+      #
+      # The update is deliberately NOT propagated to the test jobs. They restore
+      # sibling repositories from the committed lock, and re-resolving ~10 inputs in
+      # each of up to 288 jobs buys nothing but a rate-limit bill. The two jobs
+      # therefore answer two questions: "does this commit still evaluate against
+      # today's fleet" (flake-check) and "does it pass with the pins it ships" (test).
+      - name: "Refresh the pins"
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix --version
+          echo "::group::nix flake update"
+          nix flake update
+          echo "::endgroup::"
+          git --no-pager diff --stat -- flake.lock || true
+
       # Evaluate-only gate: the test jobs build and run the real artifacts, so this
       # step must not duplicate their work.
       - name: "Check flake outputs"
@@ -157,6 +273,13 @@ jobs:
     if: needs.list.outputs.count != '0'
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    env:
+      # The ubuntu image ships Nix. Installing it again means downloading an
+      # installer and re-installing Nix on every run -- ~25s per job, up to 288
+      # jobs -- to produce the binary the runner already has. Flakes are off by
+      # default, so this is the only setup any job needs.
+      NIX_CONFIG: "experimental-features = nix-command flakes"
+
     strategy:
       # Not a failure: the shape of a CI run. One red per run means as many runs as
       # defects, and the whole point of the matrix is that one run reports them all.
@@ -172,8 +295,9 @@ jobs:
             printf '%s=%s\n' "$name" "$RUNNER_TEMP" >> "$GITHUB_ENV"
           done
       - uses: actions/checkout@v6
-
-      - uses: DeterminateSystems/determinate-nix-action@v3
+      - name: "Nix from the image"
+        shell: bash
+        run: nix --version
 
       # The suites shell out to these, and the runner image does not ship them.
       - name: "Install test dependencies"
