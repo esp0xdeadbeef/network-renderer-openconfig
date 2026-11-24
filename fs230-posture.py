@@ -60,6 +60,19 @@ def canonical_model_from_bundle(payload: dict[str, Any]) -> dict[str, Any]:
         or artifact_digest(payload) != bundle_identity
     ):
         raise ValueError("canonical bundle validation or digest is invalid")
+    # FS-310-HDS-040-SDS-010-SMS-100 (renderer canonical-only consumption): a
+    # renderer maps the bundle's canonical collections. This entry point read
+    # `network.data` -- the plain control-plane artifact the bundle wraps -- which
+    # is the CPM output the row says is not a public renderer input. Refuse it
+    # here, before any projection, so the failure names the row instead of
+    # surfacing later as a missing key or a digest mismatch.
+    if isinstance(payload.get("network"), dict):
+        raise ValueError(
+            "FS-310-HDS-040-SDS-010-SMS-100: renderer input carries 'network' (the plain "
+            "control-plane artifact). Map the bundle's 'canonical' collections "
+            "(canonicalSites / canonicalRuntimeTargets / canonicalInterfaces / "
+            "canonicalRoutes); the producer model is not a renderer input"
+        )
     network = payload.get("network")
     model = network.get("data") if isinstance(network, dict) else None
     if not isinstance(model, dict):
