@@ -72,7 +72,7 @@ fi
 if [[ "${ci}" == "0" ]]; then
   printf 'FAIL %s: the CPM carries %s runtime target(s) but publishes no canonicalInterfaces, so no route authority reaches this renderer\n' "${trace_id}" "${rt}" >&2
   printf '  URS: a renderer shall consume only the validated canonical bundle and shall not obtain network meaning from another source.\n' >&2
-  printf '  SMS-060: every emitted route must trace to model/provider route authority; here there is no authority to trace.\n' >&2
+  printf '  FS-310-HDS-020-SDS-010-SMS-060: every emitted route must trace to model/provider route authority; here there is no authority to trace.\n' >&2
   printf '  Fix in network-control-plane-model: publish canonicalInterfaces with explicit identity.name and IANA type, as this renderer maps them.\n' >&2
   exit 1
 fi
