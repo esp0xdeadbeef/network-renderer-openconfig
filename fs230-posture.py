@@ -16,6 +16,7 @@ from typing import Any
 
 FAIL_CLOSED_EXIT = 2
 TRACE_ID = "FS-230-HDS-010-SDS-010-SMS-040"
+ENTERPRISE = "mini-smt"
 RELATION_ID = f"{TRACE_ID}__lab-wan-to-nebula-ipv6"
 
 
@@ -48,7 +49,15 @@ def sha256(path: pathlib.Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def canonical_model_from_bundle(payload: dict[str, Any]) -> dict[str, Any]:
+def canonical_collections(payload: dict[str, Any]) -> dict[str, Any]:
+    """The bundle's canonical collections, and nothing else.
+
+    FS-310-HDS-040-SDS-010-SMS-100: a renderer maps `canonical.<collection>`; the plain
+    control-plane model the bundle WRAPS (`network.data`) is upstream authority and not a
+    renderer input. This function used to demand `network.data` and reject the presence of
+    `network` in the same breath, so every bundle was rejected and the posture check could
+    never resolve -- the fix is to read the canonical section and leave `network` alone.
+    """
     if payload.get("kind") != "network-realization-bundle":
         raise ValueError("OC_RAW_CPM_INPUT: expected network-realization-bundle")
     validation = payload.get("validation")
@@ -60,24 +69,13 @@ def canonical_model_from_bundle(payload: dict[str, Any]) -> dict[str, Any]:
         or artifact_digest(payload) != bundle_identity
     ):
         raise ValueError("canonical bundle validation or digest is invalid")
-    # FS-310-HDS-040-SDS-010-SMS-100 (renderer canonical-only consumption): a
-    # renderer maps the bundle's canonical collections. This entry point read
-    # `network.data` -- the plain control-plane artifact the bundle wraps -- which
-    # is the CPM output the row says is not a public renderer input. Refuse it
-    # here, before any projection, so the failure names the row instead of
-    # surfacing later as a missing key or a digest mismatch.
-    if isinstance(payload.get("network"), dict):
+    canonical = payload.get("canonical")
+    if not isinstance(canonical, dict) or canonical == {}:
         raise ValueError(
-            "FS-310-HDS-040-SDS-010-SMS-100: renderer input carries 'network' (the plain "
-            "control-plane artifact). Map the bundle's 'canonical' collections "
-            "(canonicalSites / canonicalRuntimeTargets / canonicalInterfaces / "
-            "canonicalRoutes); the producer model is not a renderer input"
+            "FS-310-HDS-040-SDS-010-SMS-100: the bundle carries no 'canonical' section, so "
+            "there is nothing a renderer is allowed to map"
         )
-    network = payload.get("network")
-    model = network.get("data") if isinstance(network, dict) else None
-    if not isinstance(model, dict):
-        raise ValueError("canonical bundle lacks network.data")
-    return model
+    return canonical
 
 
 def artifact_digest(payload: dict[str, Any]) -> str:
@@ -97,12 +95,15 @@ def artifact_digest(payload: dict[str, Any]) -> str:
 
 
 def site_from_bundle(payload: dict[str, Any]) -> dict[str, Any]:
-    model = canonical_model_from_bundle(payload)
-    data = model.get("data")
-    enterprise = data.get("mini-smt") if isinstance(data, dict) else None
+    canonical = canonical_collections(payload)
+    sites = canonical.get("canonicalSites")
+    by_enterprise = sites.get("byEnterprise") if isinstance(sites, dict) else None
+    enterprise = by_enterprise.get(ENTERPRISE) if isinstance(by_enterprise, dict) else None
     site = enterprise.get(TRACE_ID) if isinstance(enterprise, dict) else None
     if not isinstance(site, dict):
-        raise ValueError(f"missing canonical network.data.data.mini-smt.{TRACE_ID}")
+        raise ValueError(
+            f"missing canonical canonicalSites.byEnterprise.{ENTERPRISE}.{TRACE_ID}"
+        )
     return site
 
 
@@ -223,7 +224,7 @@ def main() -> int:
 
     try:
         payload = read_json(args.bundle)
-        canonical_model = canonical_model_from_bundle(payload)
+        canonical_collections(payload)
         intent_hash = sha256(args.canonical_intent)
         posture, mismatches = inspect_posture(site_from_bundle(payload))
     except (OSError, ValueError) as error:

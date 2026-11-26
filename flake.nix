@@ -169,6 +169,38 @@
                 };
               };
             };
+            # The producer publishes `canonicalSites` alongside `data`, and
+            # `network-realization-model` projects the PUBLISHED collections -- so mutating
+            # only `data` is invisible to a canonical-only consumer and the altered posture
+            # was accepted. A fixture that wants to prove "an altered tuple is rejected" has
+            # to alter what a renderer is allowed to read.
+            canonicalSites =
+              let
+                base = fs230CpmOpenConfig.control_plane_model.canonicalSites;
+                site = base.byEnterprise."mini-smt".${fs230TraceId};
+                target = site.runtimeTargets.${fs230IngressTarget};
+                ingress = builtins.head target.natIntent.publicIngress;
+                tuple = builtins.head ingress.tupleRecords;
+                alteredIngress = ingress // {
+                  tupleRecords = [ (tuple // { protocol = "tcp"; }) ];
+                };
+              in
+              base
+              // {
+                byEnterprise = base.byEnterprise // {
+                  "mini-smt" = base.byEnterprise."mini-smt" // {
+                    ${fs230TraceId} = site // {
+                      runtimeTargets = site.runtimeTargets // {
+                        ${fs230IngressTarget} = target // {
+                          natIntent = target.natIntent // {
+                            publicIngress = [ alteredIngress ];
+                          };
+                        };
+                      };
+                    };
+                  };
+                };
+              };
           };
           fs230WrongRealizationInput = {
             kind = "network-control-plane-artifact";
