@@ -101,8 +101,8 @@ let
         #
         # `deepSeq` forces every attribute of what it is handed, and the withdrawn
         # plain-model handles (`semanticModel`, `controlPlaneEnvelope`,
-        # `semanticArtifact`) throw on access BY DESIGN (FS-310-HDS-040-SDS-010-
-        # SMS-100). Deep-forcing the whole validated result therefore reported a
+        # `semanticArtifact`) throw on access BY DESIGN
+        # (FS-310-HDS-040-SDS-010-SMS-100). Deep-forcing the whole validated result therefore reported a
         # violation this renderer does not commit, and the tryEval turned that into a
         # generic "canonical bundle validation failed" -- which then made the
         # projection a rejection record with no `canonicalPortable`, which is what
@@ -140,9 +140,9 @@ let
           # THE CANONICAL COLLECTIONS, NOT THE RAW MODEL.
           #
           # This read `validated.semanticModel.data.<enterprise>` -- a renderer consuming
-          # the plain control-plane model, which is exactly what FS-310-HDS-040-SDS-010-
-          # SMS-100 forbids. The deepSeq above surfaced it as a generic validation
-          # failure rather than as the rule violation it is.
+          # the plain control-plane model, which is exactly what
+          # FS-310-HDS-040-SDS-010-SMS-100 forbids. The deepSeq above surfaced it as a
+          # generic validation failure rather than as the rule violation it is.
           enterpriseData =
             ((validated.canonical.canonicalSites or { }).byEnterprise or { }).${enterprise}
             or { };
