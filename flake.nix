@@ -16,6 +16,25 @@
     network-realization-model.inputs.nixpkgs.follows = "nixpkgs";
     network-realization-schema.url = "github:esp0xdeadbeef/network-realization-schema";
     network-realization-schema.inputs.nixpkgs.follows = "nixpkgs";
+    # ONE NODE PER REPOSITORY.
+    #
+    # Both the model and the schema declare network-labs as an input, and
+    # network-labs declares them, so an unfollowed edge makes Nix fork a
+    # duplicate snapshot rather than reuse this lock's nodes. This lock carries
+    # no root `network-labs` (it is `flake = false` below), so the fork was the
+    # only network-labs in the graph -- and it dragged in stale revisions:
+    #
+    #   network-compiler@5a8682f, network-realization-schema@730ca4f
+    #
+    # measured in the network-labs renderer matrix, where every test that
+    # evaluated this flake tried to download them and died with "Could not
+    # resolve host: github.com" in the closed store. Following the two edges
+    # collapses the lock from 96 nodes to 45.
+    network-realization-schema.inputs.network-control-plane-model.follows = "network-control-plane-model";
+    network-realization-schema.inputs.network-labs.follows = "network-labs";
+    network-realization-model.inputs.network-control-plane-model.follows = "network-control-plane-model";
+    network-realization-model.inputs.network-labs.follows = "network-labs";
+    network-realization-model.inputs.network-realization-schema.follows = "network-realization-schema";
 
     network-labs = {
       url = "github:esp0xdeadbeef/network-labs";
